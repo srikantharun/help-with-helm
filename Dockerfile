@@ -29,6 +29,11 @@ RUN apk add --no-cache ca-certificates \
     # Init version 2 helm:
     helm init --client-only
 
+RUN \
+	gcloud components install kubectl gke-gcloud-auth-plugin \
+	&& rm -rf /google-cloud-sdk/.install/.backup \
+	&& rm -rf $(find /google-cloud-sdk/ -regex ".*/__pycache__")
+
 ENV PYTHONPATH "/usr/lib/python3.8/site-packages/"
 
 COPY . /usr/src/
