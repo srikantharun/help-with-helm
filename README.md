@@ -1,3 +1,4 @@
+Credits to https://github.com/deliverybot/helm just cloned this repo because, want to move forward with some new features and open pull request on original repo.
 # Helm Action
 
 Deploys a helm chart using GitHub actions. Supports canary deployments and
@@ -18,7 +19,7 @@ payload if the action was triggered by a deployment.
 - `namespace`: Kubernetes namespace name. (required)
 - `chart`: Helm chart path. If set to "app" this will use the built in helm
   chart found in this repository. (required)
-- `chart_version`: The version of the helm chart you want to deploy (distinct from app version)
+- `chart-version`: The version of the helm chart you want to deploy (distinct from app version)
 - `values`: Helm chart values, expected to be a YAML or JSON string.
 - `track`: Track for the deployment. If the track is not "stable" it activates
   the canary workflow described below.
@@ -35,7 +36,11 @@ payload if the action was triggered by a deployment.
 - `version`: Version of the app, usually commit sha works here.
 - `timeout`: specify a timeout for helm deployment
 - `repository`: specify the URL for a helm repo to come from
-- `atomic`: If true, upgrade process rolls back changes made in case of failed upgrade. Defaults to true.
+- `repository_password`: Password to login in to the repository.
+- `repository_username`: Username to login to the repository.
+- `repository_alias`: Alias of the repository.
+- `kube-token`: Bearer token to use for authentication with Kubernetes. Can be fetched with e.g. elseu/sdu-eks-token-action.
+- `kube-context`: Context to use to connect to the Kubernetes API.
 
 Additional parameters: If the action is being triggered by a deployment event
 and the `task` parameter in the deployment event is set to `"remove"` then this
@@ -43,12 +48,13 @@ action will execute a `helm delete $service`
 
 #### Versions
 
-- `helm`: v2.16.1
-- `helm3`: v3.0.0
+- `helm`: v2.16.12
+- `helm3`: v3.3.4
 
 ### Environment
 
 - `KUBECONFIG_FILE`: Kubeconfig file for Kubernetes cluster access.
+- `KUBECONFIG_BASE64`: Kubeconfig as base64 for Kubernetes cluster access.
 
 ### Value file interpolation
 
@@ -82,7 +88,7 @@ jobs:
           name: foobar
         value-files: >-
         [
-          "values.yaml", 
+          "values.yaml",
           "values.production.yaml"
         ]
       env:
