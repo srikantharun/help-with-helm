@@ -2,11 +2,15 @@ const core = require("@actions/core");
 const github = require("@actions/github");
 const exec = require("@actions/exec");
 const fs = require("fs");
+const os = require("os");
+const path = require("path");
 const util = require("util");
+const yaml = require("js-yaml");
 const Mustache = require("mustache");
 
 const writeFile = util.promisify(fs.writeFile);
 const readFile = util.promisify(fs.readFile);
+const fileExists = util.promisify(fs.exists);
 const required = { required: true };
 
 /**
@@ -99,10 +103,17 @@ function getValueFiles(files) {
 function getInput(name, options) {
   const context = github.context;
   const deployment = context.payload.deployment;
-  let val = core.getInput(name.replace("_", "-"), {
+  let val = core.getInput(name, {
     ...options,
     required: false
   });
+  // Make sure that INPUT_ also works because env variables with - is not valid.
+  if (val.length === 0 && name.includes('-')) {
+    val = core.getInput(name.replace('-', '_'), {
+      ...options,
+      required: false
+    });
+  }
   if (deployment) {
     if (deployment[name]) val = deployment[name];
     if (deployment.payload[name]) val = deployment.payload[name];
@@ -146,6 +157,61 @@ function deleteCmd(helm, namespace, release) {
 }
 
 /**
+ * Takes in a secret value and decodes it from base64.
+ *
+ * @param {string} secretVal
+ */
+function parseBase64(secretVal) {
+  return Buffer.from(secretVal, 'base64').toString('utf-8');
+}
+
+/**
+ * Create a rewritten kubeconfig file that includes a hardwired authentication token.
+ * @param {string} kubeconfigPath
+ * @param {string} kubeToken
+ */
+async function addTokenToKubeConfig(kubeconfigPath, kubeToken) {
+  if (!kubeconfigPath) {
+    kubeconfigPath = path.join(os.homedir(), ".kube", "config");
+  }
+  if (!await fileExists(kubeconfigPath)) {
+    throw new Error("Cannot find a kubeconfig file, which is required when using helm2 with the kube-token option");
+  }
+
+  // Read the kubeconfig file.
+  const kubeconfigData = await readFile(kubeconfigPath, { encoding: "utf8" });
+  const kubeconfigContent = yaml.load(kubeconfigData, {
+    filename: kubeconfigPath
+  });
+
+  // Create a user with the specified token.
+  const userName = "helm-deploy-action-token-user";
+  if (!kubeconfigContent.users) {
+    kubeconfigContent.users = [];
+  }
+  kubeconfigContent.users.push({
+    name: userName,
+    user: {
+      token: kubeToken
+    }
+  });
+
+  // Hook up that user to each context.
+  if (!kubeconfigContent.contexts) {
+    throw new Error("Cannot find contexts in the kubeconfig file, which are required when using helm2 with the kube-token option");
+  }
+  for (const context of kubeconfigContent.contexts) {
+    context.context.user = userName;
+  }
+
+  // Write it to a local temp file.
+  const newKubeconfigYaml = yaml.dump(kubeconfigContent);
+  const newKubeconfigPath = "./kubeconfig-with-token.yml";
+  await writeFile(newKubeconfigPath, newKubeconfigYaml);
+  return newKubeconfigPath;
+}
+
+/**
  * Run executes the helm deployment.
  */
 async function run() {
@@ -158,19 +224,24 @@ async function run() {
     const release = releaseName(appName, track);
     const namespace = getInput("namespace", required);
     const chart = chartName(getInput("chart", required));
-    const chartVersion = getInput("chart_version");
+    const chartVersion = getInput("chart-version");
     const values = getValues(getInput("values"));
     const task = getInput("task");
     const version = getInput("version");
-    const valueFiles = getValueFiles(getInput("value_files"));
-    const removeCanary = getInput("remove_canary");
+    const valueFiles = getValueFiles(getInput("value-files"));
+    const removeCanary = getInput("remove-canary");
     const helm = getInput("helm") || "helm";
     const timeout = getInput("timeout");
     const repository = getInput("repository");
+    const repository_password = getInput("repository-password");
+    const repository_username = getInput("repository-username");
+    const repository_alias = getInput("repository-alias");
     const dryRun = core.getInput("dry-run");
     const secrets = getSecrets(core.getInput("secrets"));
-    const atomic = getInput("atomic") || true;
+    const kubeContext = getInput("kube-context");
+    const kubeToken = getInput("kube-token");
 
+    core.debug(`param: helm = "${helm}"`);
     core.debug(`param: track = "${track}"`);
     core.debug(`param: release = "${release}"`);
     core.debug(`param: appName = "${appName}"`);
@@ -186,7 +257,11 @@ async function run() {
     core.debug(`param: removeCanary = ${removeCanary}`);
     core.debug(`param: timeout = "${timeout}"`);
     core.debug(`param: repository = "${repository}"`);
-    core.debug(`param: atomic = "${atomic}"`);
+    core.debug(`param: repository_password = "${repository_password}"`);
+    core.debug(`param: repository_username = "${repository_username}"`);
+    core.debug(`param: repository_alias = "${repository_alias}"`);
+    core.debug(`param: kube-context = "${kubeContext}"`);
+    core.debug(`param: kube-token = "${kubeToken}"`);
 
 
     // Setup command options and arguments.
@@ -196,6 +271,7 @@ async function run() {
       chart,
       "--install",
       "--wait",
+      "--atomic",
       `--namespace=${namespace}`,
     ];
 
@@ -213,7 +289,6 @@ async function run() {
     if (version) args.push(`--set=app.version=${version}`);
     if (chartVersion) args.push(`--version=${chartVersion}`);
     if (timeout) args.push(`--timeout=${timeout}`);
-    if (repository) args.push(`--repo=${repository}`);
     valueFiles.forEach(f => args.push(`--values=${f}`));
     args.push("--values=./values.yml");
 
@@ -224,19 +299,53 @@ async function run() {
       args.push("--set=service.enabled=false", "--set=ingress.enabled=false");
     }
 
-    // If true upgrade process rolls back changes made in case of failed upgrade.
-    if (atomic === true) {
-      args.push("--atomic");
-    }
-
     // Setup necessary files.
     if (process.env.KUBECONFIG_FILE) {
       process.env.KUBECONFIG = "./kubeconfig.yml";
       await writeFile(process.env.KUBECONFIG, process.env.KUBECONFIG_FILE);
+    } else if (process.env.KUBECONFIG_BASE64) {
+      process.env.KUBECONFIG = "./kubeconfig.yml";
+      await writeFile(process.env.KUBECONFIG, parseBase64(process.env.KUBECONFIG_BASE64));
     }
     await writeFile("./values.yml", values);
 
+    if (kubeContext) args.push(`--kube-context=${kubeContext}`);
+
+    if (kubeToken) {
+      if (helm === "helm3") {
+        args.push(`--kube-token=${kubeToken}`);
+      } else {
+        // Helm 2 does not support the --kube-token option.
+        // So we rewrite the KUBECONFIG file to include the token in there.
+        process.env.KUBECONFIG = await addTokenToKubeConfig(process.env.KUBECONFIG, kubeToken);
+      }
+    }
+
     core.debug(`env: KUBECONFIG="${process.env.KUBECONFIG}"`);
+
+    if (repository && repository_alias) {
+      core.info('Add repository');
+      const addRepoArgs = [
+        'repo',
+        'add',
+      ]
+
+      if (repository_username && repository_password) {
+        addRepoArgs.push(`--username`, repository_username, `--password`, repository_password);
+      }
+
+      addRepoArgs.push(repository_alias, repository,)
+
+      await exec.exec(helm, addRepoArgs);
+
+      const updateRepoArgs = [
+        'repo',
+        'update'
+      ]
+
+      core.info('Update repository');
+      await exec.exec(helm, updateRepoArgs);
+    }
 
     // Render value files using github variables.
     await renderFiles(valueFiles.concat(["./values.yml"]), {
@@ -246,6 +355,7 @@ async function run() {
 
     // Remove the canary deployment before continuing.
     if (removeCanary) {
+      core.info('Remove canary helm chart');
       core.debug(`removing canary ${appName}-canary`);
       await exec.exec(helm, deleteCmd(helm, namespace, `${appName}-canary`), {
         ignoreReturnCode: true
@@ -254,10 +364,12 @@ async function run() {
 
     // Actually execute the deployment here.
     if (task === "remove") {
+      core.info('Remove helm chart');
       await exec.exec(helm, deleteCmd(helm, namespace, release), {
         ignoreReturnCode: true
       });
     } else {
+      core.info('Install helm chart');
       await exec.exec(helm, args);
     }
 
