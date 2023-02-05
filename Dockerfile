@@ -34,6 +34,17 @@ RUN \
 	&& rm -rf /google-cloud-sdk/.install/.backup \
 	&& rm -rf $(find /google-cloud-sdk/ -regex ".*/__pycache__")
 
+# Download, verify and extract terraform.
+RUN \
+	apk add curl unzip coreutils \
+	&& curl -vo /tmp/terraform.zip https://releases.hashicorp.com/terraform/${TERRAFORM_VERSION}/terraform_${TERRAFORM_VERSION}_linux_amd64.zip \
+	&& echo "${TERRAFORM_SHA256} /tmp/terraform.zip" >/tmp/terraform.sum \
+	&& sha256sum --check --warn --strict /tmp/terraform.sum \
+	&& cd /usr/local/bin \
+	&& unzip /tmp/terraform.zip terraform \
+	&& rm /tmp/terraform.zip /tmp/terraform.sum \
+	&& apk del curl unzip coreutils
+
 ENV PYTHONPATH "/usr/lib/python3.8/site-packages/"
 
 COPY . /usr/src/
