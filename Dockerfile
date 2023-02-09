@@ -7,7 +7,7 @@ ENV HELM_3_FILE="helm-v3.8.0-linux-amd64.tar.gz"
 
 RUN apk add --no-cache ca-certificates \
     --repository http://dl-3.alpinelinux.org/alpine/edge/community/ \
-    jq curl bash nodejs aws-cli && \
+    jq curl bash nodejs npm aws-cli && \
     apk add --no-cache aws-cli && \
     apk add --no-cache \
         python3 \
