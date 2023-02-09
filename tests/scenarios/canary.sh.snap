@@ -1,4 +1,5 @@
 ::debug::not setting deployment status
+::debug::param: helm = "helm"
 ::debug::param: track = "canary"
 ::debug::param: release = "app-canary"
 ::debug::param: appName = "app"
@@ -14,9 +15,14 @@
 ::debug::param: removeCanary = 
 ::debug::param: timeout = ""
 ::debug::param: repository = ""
-::debug::param: atomic = "true"
+::debug::param: repository_password = ""
+::debug::param: repository_username = ""
+::debug::param: repository_alias = ""
+::debug::param: kube-context = ""
+::debug::param: kube-token = ""
 ::debug::env: KUBECONFIG="undefined"
 ::debug::rendering value files [./values.yml] with: {"secrets":{"secret":"val"}}
-[command]helm upgrade app-canary /usr/src/charts/app --install --wait --namespace=default --set=app.name=app --set=app.version=1234 --values=./values.yml --set=service.enabled=false --set=ingress.enabled=false --atomic
-helm upgrade app-canary /usr/src/charts/app --install --wait --namespace=default --set=app.name=app --set=app.version=1234 --values=./values.yml --set=service.enabled=false --set=ingress.enabled=false --atomic
+Install helm chart
+[command]/tmp/bin/helm upgrade app-canary /usr/src/charts/app --install --wait --atomic --namespace=default --set=app.name=app --set=app.version=1234 --values=./values.yml --set=service.enabled=false --set=ingress.enabled=false
+helm upgrade app-canary /usr/src/charts/app --install --wait --atomic --namespace=default --set=app.name=app --set=app.version=1234 --values=./values.yml --set=service.enabled=false --set=ingress.enabled=false
 ::debug::not setting deployment status
